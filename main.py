@@ -5,6 +5,151 @@ import time
 import pickle
 from game.game import Game
 
+
+from neat.reporting import ReporterSet
+
+
+class CompleteExtinctionException(Exception):
+    pass
+
+
+class Population(object):
+    """
+    This class implements the core evolution algorithm:
+        1. Evaluate fitness of all genomes.
+        2. Check to see if the termination criterion is satisfied; exit if it is.
+        3. Generate the next generation from the current population.
+        4. Partition the new generation into species based on genetic similarity.
+        5. Go to 1.
+    """
+
+    def __init__(self, config, initial_state=None):
+        self.reporters = ReporterSet()
+        self.config = config
+        stagnation = config.stagnation_type(config.stagnation_config, self.reporters)
+        self.reproduction = config.reproduction_type(
+            config.reproduction_config, self.reporters, stagnation
+        )
+        if config.fitness_criterion == "max":
+            self.fitness_criterion = max
+
+        if initial_state is None:
+            # Create a population from scratch, then partition into species.
+            self.population = self.reproduction.create_new(
+                config.genome_type, config.genome_config, config.pop_size
+            )
+            self.species = config.species_set_type(
+                config.species_set_config, self.reporters
+            )
+            self.generation = 0
+            self.species.speciate(config, self.population, self.generation)
+        else:
+            self.population, self.species, self.generation = initial_state
+
+        self.best_genome = None
+
+    def add_reporter(self, reporter):
+        self.reporters.add(reporter)
+
+    def remove_reporter(self, reporter):
+        self.reporters.remove(reporter)
+
+    def run(self, fitness_function, n=None):
+        """
+        Runs NEAT's genetic algorithm for at most n generations.  If n
+        is None, run until solution is found or extinction occurs.
+
+        The user-provided fitness_function must take only two arguments:
+            1. The population as a list of (genome id, genome) tuples.
+            2. The current configuration object.
+
+        The return value of the fitness function is ignored, but it must assign
+        a Python float to the `fitness` member of each genome.
+
+        The fitness function is free to maintain external state, perform
+        evaluations in parallel, etc.
+
+        It is assumed that fitness_function does not modify the list of genomes,
+        the genomes themselves (apart from updating the fitness member),
+        or the configuration object.
+        """
+
+        if self.config.no_fitness_termination and (n is None):
+            raise RuntimeError(
+                "Cannot have no generational limit with no fitness termination"
+            )
+
+        k = 0
+        while n is None or k < n:
+            k += 1
+
+            self.reporters.start_generation(self.generation)
+
+            # Evaluate all genomes using the user-provided function.
+
+            fitness_function(list(self.population.items()), self.config)
+
+            # Gather and report statistics.
+            best = None
+            for g in self.population.values():
+                if g.fitness is None:
+                    raise RuntimeError(
+                        "Fitness not assigned to genome {}".format(g.key)
+                    )
+
+                if best is None or g.fitness > best.fitness:
+                    best = g
+            self.reporters.post_evaluate(
+                self.config, self.population, self.species, best
+            )
+
+            # Track the best genome ever seen.
+            if self.best_genome is None or best.fitness > self.best_genome.fitness:
+                self.best_genome = best
+
+            if not self.config.no_fitness_termination:
+                # End if the fitness threshold is reached.
+                fv = self.fitness_criterion(g.fitness for g in self.population.values())
+                if fv >= self.config.fitness_threshold:
+                    self.reporters.found_solution(self.config, self.generation, best)
+                    break
+
+            # Create the next generation from the current generation.
+            self.population = self.reproduction.reproduce(
+                self.config, self.species, self.config.pop_size, self.generation
+            )
+            # print("aaaaaaaaaaaaaaaaaa")
+
+            # Check for complete extinction.
+            if not self.species.species:
+                self.reporters.complete_extinction()
+
+                # If requested by the user, create a completely new population,
+                # otherwise raise an exception.
+                if self.config.reset_on_extinction:
+                    self.population = self.reproduction.create_new(
+                        self.config.genome_type,
+                        self.config.genome_config,
+                        self.config.pop_size,
+                    )
+                else:
+                    raise CompleteExtinctionException()
+
+            # Divide the new population into species.
+            self.species.speciate(self.config, self.population, self.generation)
+
+            self.reporters.end_generation(self.config, self.population, self.species)
+
+            self.generation += 1
+
+        if self.config.no_fitness_termination:
+            self.reporters.found_solution(
+                self.config, self.generation, self.best_genome
+            )
+
+        return self.best_genome
+
+
 pygame.init()
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
@@ -40,6 +185,7 @@ class Ark:
 
         # Main game loop
         running = True
+
         while running:
             clock.tick(FPS)
             self.screen.blit(self.image, (0, 0))
@@ -104,7 +250,7 @@ class Ark:
             )
             decision = output.index(max(output))
 
-            if decision == 0:  # AI does nothing
+            if decision == 0:  # AI doesn't move
                 pass
             elif decision == 1:  # AI moves paddle to the left
                 self.game.move_paddle(0)
@@ -126,15 +272,14 @@ class Ark:
         # Create a feed-forward neural network for the current genome
         net = neat.nn.FeedForwardNetwork.create(genome, config)
         self.genome = genome
-        self.game.reset_game()
 
         while running:
-            # for real-time visualization, reduce speed
+            # for real-time visualization, comment it out
             # clock.tick(60)
 
             # comment these two lines to increase training speed
-            # self.screen.blit(self.image, (0, 0))
-            # self.game.draw()
+            self.screen.blit(self.image, (0, 0))
+            self.game.draw()
 
             # Event handling loop
             for event in pygame.event.get():
@@ -143,6 +288,7 @@ class Ark:
 
             # Update game state and record last scoring time if a collision occurred
             game_info = self.game.loop(True)
+
             if game_info.collision_occurred:
                 last_score_time = time.time()
 
@@ -154,17 +300,18 @@ class Ark:
             # Calculate time since last score
             time_since_last_score = time.time() - last_score_time
 
-            # Terminate current session if ball drops, no score in 10 seconds, or maximum score reached
+            # Terminate current session if no score in 10 seconds
+            if time_since_last_score > 10:
+                self.calculate_fitness(game_info.score, game_info.ball_hit)
+                self.game.reset_game()
+                break
             if (
-                self.ball.y >= SCREEN_HEIGHT
-                or time_since_last_score > 10
+                self.ball.y + self.ball.height // 2 >= SCREEN_HEIGHT + self.ball.height
                 or game_info.score == 550
             ):
                 # Calculate and record fitness of the genome
                 self.calculate_fitness(game_info.score, game_info.ball_hit)
-                self.game.reset_game()
                 break
-
         return False
 
     def move_ai_paddle(self, net):
@@ -209,7 +356,7 @@ class Ark:
             self.genome.fitness += score / 10
 
         # Adjust for possible random points at the beginnig of the game
-        self.genome.fitness -= 0.5
+        self.genome.fitness -= 1
 
         if score > 150:
             self.genome.fitness += 20
@@ -218,11 +365,12 @@ class Ark:
         if score == 550:
             self.genome.fitness += 60
 
+        self.game.reset_game()
+
 
 # Run each genome through the game until the fitness threshold is reached or the epoch limit is hit
 def eval_genomes(genomes, config):
     pygame.display.set_caption("Ark")
-    ark = Ark()
 
     for _, genome in genomes:
         genome.fitness = 0 if genome.fitness is None else genome.fitness
@@ -238,10 +386,10 @@ def run_neat(config):
     p.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     p.add_reporter(stats)
-    # p.add_reporter(neat.Checkpointer(50))
+    p.add_reporter(neat.Checkpointer(50))
 
     # Run the algorithm for up to 1000 generations and save the best genome
-    winner = p.run(eval_genomes, 3000)
+    winner = p.run(eval_genomes)
 
     with open("best.pickle", "wb") as f:
         # Save the best genome for future use
@@ -250,15 +398,14 @@ def run_neat(config):
 
 def test_best_network(config):
     # Load the best genome and create a network from it
-    with open("best.pickle-1", "rb") as f:
+    with open("best.pickle", "rb") as f:
         winner = pickle.load(f)
     winner_net = neat.nn.FeedForwardNetwork.create(winner, config)
 
     # Display the game window
     pygame.display.set_caption("Arkanoid")
 
-    # Create an instance of the game and test the AI network
-    ark = Ark()
+    # Test the AI network
     ark.test_ai(winner_net)
 
 
@@ -275,13 +422,14 @@ if __name__ == "__main__":
         neat.DefaultStagnation,
         config_path,
     )
+    ark = Ark()
 
     # Uncomment the following lines to run the game, train the AI, or test the AI respectively:
     # run game as player
-    # Ark().main()
+    ark.main()
 
     # train the AI
     # run_neat(config)
 
     # test the AI
-    test_best_network(config)
+    # test_best_network(config)

@@ -1,6 +1,10 @@
 # Arkanoid Game
 An implementation of the classic arcade game Arkanoid in Python using Pygame, with a NEAT AI player.
 
+
+![Game screenshot](screenshot.png)
+
+
 ## Features
 * Player-controlled paddle with keyboard input.
 * Ball and brick physics.
@@ -52,4 +56,4 @@ This project is licensed under the terms of the MIT license.
 - [ ] Improve the AI training efficiency.
 - [ ] Add more levels to the game.
 - [ ] Improve UI and game design.
-- [ ] Refine and enhance game mechanics 
+- [x] Refine and enhance game mechanics 

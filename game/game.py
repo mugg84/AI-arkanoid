@@ -1,4 +1,5 @@
 import pygame
+import math
 from game.paddle import Paddle
 from game.ball import Ball
 from game.blocks import Blocks
@@ -37,8 +38,8 @@ class Game:
     def loop(self, training=False):
         self.reset_game()
         self.training_AI = training
-        self.ball.move()
         collision_occurred = self.handle_collision()
+        self.ball.move()
         game_info = GameInformation(self.score, self.ball_hit, collision_occurred)
         return game_info
 
@@ -75,7 +76,6 @@ class Game:
                 self.bounce_sound.play()
 
         # ball/paddle collision
-
         if (
             self.ball.rect.colliderect(self.paddle.rect)
             and self.ball.y_speed > 0
@@ -85,23 +85,27 @@ class Game:
                 self.ball.rect.centerx - self.paddle.rect.left
             ) / self.paddle.width
 
-            if (
-                self.ball.rect.left - self.ball.x_speed >= self.paddle.rect.right
-                or self.ball.rect.right - self.ball.x_speed <= self.paddle.rect.left
-            ):
-                self.ball.x_speed *= -1.1
-                self.ball.y_speed *= -1
-            elif self.ball.rect.bottom >= self.paddle.rect.top:
-                self.ball.y_speed *= -1
+            # Convert hit position to a range between -1 and 1
+            relative_intersect = (paddle_hit_position - 0.5) * 2
 
-            # check if the ball hit the sides of the paddle (0.25 and 0.75 are somewhat arbitrary, adjust as needed)
-            if paddle_hit_position < 0.25 or paddle_hit_position > 0.75:
-                self.ball.x_speed *= 1.1  # increase the ball speed by 10%
+            # Define maximum bounce angle (here we use 60 degrees, but it can be adjusted as needed)
+            max_bounce_angle = math.radians(60)
 
-            # ensure the ball speed doesn't get too high
-            self.ball.x_speed = min(
-                max(self.ball.x_speed, -10), 10
-            )  # limit the speed between -10 and 10
+            # Calculate new direction (this will be between -max_bounce_angle and max_bounce_angle)
+            angle = relative_intersect * max_bounce_angle
+
+            # Update ball speeds based on this angle and the ball's overall speed
+            old_speed = math.sqrt(self.ball.x_speed**2 + self.ball.y_speed**2)
+            self.ball.x_speed = old_speed * math.sin(angle)
+            self.ball.y_speed = -old_speed * math.cos(angle)
+
+            # Normalize the ball's speed (remove accumulated floating point errors)
+            magnitude = math.sqrt(self.ball.x_speed**2 + self.ball.y_speed**2)
+            self.ball.x_speed = (self.ball.x_speed / magnitude) * old_speed
+            self.ball.y_speed = (self.ball.y_speed / magnitude) * old_speed
+
+            # Move the ball's position after the speed has been updated
+            self.ball.rect.bottom = self.paddle.rect.top
 
             self.ball_hit += 1
             if not self.training_AI:
@@ -113,33 +117,36 @@ class Game:
             for block in row:
                 if self.ball.rect.colliderect(block[1]):
                     row.remove(block)
+
                     self.score += 10
+                    # print(self.score)
 
-                    # Calculate the overlap between the ball and the block
-                    dx = min(
-                        block[1].right - self.ball.rect.left,
-                        self.ball.rect.right - block[1].left,
+                    # Check which side of the block the ball hit
+                    ball_center = self.ball.rect.center
+                    block_center = block[1].center
+
+                    # Determine if the collision was more horizontal or vertical
+                    dx = (
+                        abs(ball_center[0] - block_center[0])
+                        - (block[1].width + self.ball.rect.width) / 2
                     )
-                    dy = min(
-                        block[1].bottom - self.ball.rect.top,
-                        self.ball.rect.bottom - block[1].top,
+                    dy = (
+                        abs(ball_center[1] - block_center[1])
+                        - (block[1].height + self.ball.rect.height) / 2
                     )
 
-                    # Determine if the collision is horizontal or vertical, and update the ball speed accordingly
-                    if dx <= dy:
+                    if dx > dy:
+                        # Horizontal collision, flip x speed
                         self.ball.x_speed *= -1
                     else:
+                        # Vertical collision, flip y speed
                         self.ball.y_speed *= -1
 
                     collision_occurred = True
                     if not self.training_AI:
                         self.bounce_sound.play()
-                    break
 
-            if collision_occurred:
-                return True
-
-        return False
+        return collision_occurred
 
     def display_score(self):
         font = pygame.font.Font(None, 36)
