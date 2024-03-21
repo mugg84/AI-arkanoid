@@ -20,7 +20,7 @@ git clone https://github.com/mugg84/AI-arkanoid.git
 ```
 Navigate into the project directory:
 ```python
-cd Arkanoid-Game
+cd AI-arkanoid
 ```
 Create a virtual environment:
 ```python
