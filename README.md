@@ -16,7 +16,7 @@ Make sure you have Python 3.x installed and the latest version of pip installed 
 
 Clone the project:
 ```python
-git clone https://github.com/yourusername/Arkanoid-Game.git
+git clone https://github.com/mugg84/AI-arkanoid.git
 ```
 Navigate into the project directory:
 ```python
