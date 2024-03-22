@@ -36,9 +36,11 @@ Install all dependencies:
 pip install -r requirements.txt
 ```
 ## Usage
-You can run the game as a player:
+Uncomment the following lines to run the game, train the AI, or test the AI respectively:
+
+Run game as player
 ```python 
-Ark().main()
+ark.main()
 ```
 You can also train the AI:
 ```python 
@@ -48,6 +50,14 @@ Or you can have the AI play the game:
 ```python 
 test_best_network(config)
 ```
+
+Save the changes to the `main.py` file after uncommenting the relevant lines.
+Run the script using Python 3:
+
+```bash
+python3 main.py
+```
+
 ## License
 This project is licensed under the terms of the MIT license.
 
